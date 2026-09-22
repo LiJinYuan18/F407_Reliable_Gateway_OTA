@@ -17,12 +17,12 @@
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
-#include "main.h"
-#include "cmsis_os.h"
+#include "main.h"        //声明HAL库函数和全局句柄
+#include "cmsis_os.h"    //提供 FreeRTOS 的 API
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "stdio.h"
+#include "stdio.h"       //提供 `printf` 的声明
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,7 +47,9 @@ UART_HandleTypeDef huart1;
 
 osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
-
+osMessageQId myQueueHandle;   //定于队列句柄
+osSemaphoreId mySemHandle;    //定义信号量句柄
+osMutexId myMutexHandle;      //定义互斥量句柄
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -58,7 +60,9 @@ static void MX_USART1_UART_Init(void);
 void StartDefaultTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
-
+void StartProducerTask(void const * argument); //生产者任务
+void StartConsumerTask(void const * argument); //消费者任务
+void StartSemaphoreTask(void const * argument);//信号量任务
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -106,10 +110,14 @@ int main(void)
   /* USER CODE END 2 */
 
   /* USER CODE BEGIN RTOS_MUTEX */
+  osMutexDef(myMutex);//定义互斥量
+  myMutexHandle = osMutexCreate(osMutex(myMutex));//创建互斥量
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
+  osSemaphoreDef(mySem);//定信号量
+  mySemHandle = osSemaphoreCreate(osSemaphore(mySem), 1);//创建信号量
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
 
@@ -118,6 +126,8 @@ int main(void)
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
+  osMessageQDef(myQueue, 10, uint32_t);//定义队列
+  myQueueHandle = osMessageCreate(osMessageQ(myQueue), NULL);//创建队列
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
 
@@ -127,6 +137,14 @@ int main(void)
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
+  osThreadDef(producerTask, StartProducerTask, osPriorityNormal, 0, 128);//定义生产者任务
+  osThreadCreate(osThread(producerTask), NULL);//创建生产者任务
+
+  osThreadDef(consumerTask, StartConsumerTask, osPriorityNormal, 0, 128);//定义消费者任务
+  osThreadCreate(osThread(consumerTask), NULL);//创建消费者任务
+
+  osThreadDef(semaphoreTask, StartSemaphoreTask, osPriorityNormal, 0, 128);//定义信号量任务
+  osThreadCreate(osThread(semaphoreTask), NULL);//创建信号量任务
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
 
@@ -303,11 +321,6 @@ static void MX_GPIO_Init(void)
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
-
-/* USER CODE BEGIN 4 */
-
-/* USER CODE END 4 */
-
 /* USER CODE BEGIN Header_StartDefaultTask */
 /**
   * @brief  Function implementing the defaultTask thread.
@@ -317,16 +330,57 @@ static void MX_GPIO_Init(void)
 /* USER CODE END Header_StartDefaultTask */
 void StartDefaultTask(void const * argument)
 {
-  /* USER CODE BEGIN 5 */
-  /* Infinite loop */
+ /* USER CODE BEGIN 5 */
+ /* Infinite loop */
 	for(;;)
 	{
 	    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_0);
 	    printf("LED Toggle\r\n");
 	    osDelay(500);
 	}
-  /* USER CODE END 5 */
+ /* USER CODE END 5 */
 }
+/* USER CODE BEGIN 4 */
+void StartSemaphoreTask(void const * argument)
+{
+    for(;;)
+    {
+        if(osSemaphoreWait(mySemHandle, osWaitForever) == osOK)//等待信号量
+        {
+            printf("Semaphore received!\r\n");
+        }
+    }
+}
+
+void StartProducerTask(void const * argument)
+{
+    uint32_t count = 0;//计数器
+    for(;;)
+    {
+    	count++;
+    	osMessagePut(myQueueHandle, count, osWaitForever);//把数据放进队列
+    	osMutexWait(myMutexHandle, osWaitForever);//拿锁
+    	printf("Producer: %lu\r\n", count);//打印
+    	osMutexRelease(myMutexHandle);//放锁
+    	osDelay(1000);
+    }
+}
+
+void StartConsumerTask(void const * argument)
+{
+    osEvent event;//接收队列数据
+    for(;;)
+    {
+        event = osMessageGet(myQueueHandle, osWaitForever);//从队列取数据
+        if(event.status == osEventMessage)//判断数据是否是信息
+        {
+        	osMutexWait(myMutexHandle, osWaitForever);//拿锁
+        	printf("Consumer: %lu\r\n", event.value.v);
+        	osMutexRelease(myMutexHandle);//放锁
+        }
+    }
+}
+/* USER CODE END 4 */
 
 /**
   * @brief  This function is executed in case of error occurrence.
