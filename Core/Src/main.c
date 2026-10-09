@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "stdio.h"       //提供 `printf` 的声明
+#include "string.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -64,6 +65,11 @@ void StartProducerTask(void const * argument); //生产者任务
 void StartConsumerTask(void const * argument); //消费者任务
 void StartSemaphoreTask(void const * argument);//信号量任务
 uint32_t W25Q128_ReadID(void);                 //W25Q128
+void W25Q128_WriteEnable(void);
+void W25Q128_WaitBusy(void);
+void W25Q128_SectorErase(uint32_t addr);
+void W25Q128_PageWrite(uint32_t addr, uint8_t *data, uint16_t len);
+void W25Q128_ReadData(uint32_t addr, uint8_t *buf, uint16_t len);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -396,6 +402,74 @@ uint32_t W25Q128_ReadID(void)
 
     return flash_id;
 }
+
+void W25Q128_WriteEnable(void)
+{
+    uint8_t cmd = 0x06;
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, &cmd, 1, 100);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+}
+
+void W25Q128_WaitBusy(void)
+{
+    uint8_t cmd = 0x05;
+    uint8_t status = 0;
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, &cmd, 1, 100);
+    do {
+        HAL_SPI_Receive(&hspi1, &status, 1, 100);
+    } while(status & 0x01);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+}
+
+void W25Q128_SectorErase(uint32_t addr)
+{
+    uint8_t cmd = 0x20;
+    uint8_t addr_buf[3];
+    addr_buf[0] = (addr >> 16) & 0xFF;
+    addr_buf[1] = (addr >> 8) & 0xFF;
+    addr_buf[2] = addr & 0xFF;
+
+    W25Q128_WriteEnable();
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, &cmd, 1, 100);
+    HAL_SPI_Transmit(&hspi1, addr_buf, 3, 100);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+    W25Q128_WaitBusy();
+}
+
+void W25Q128_PageWrite(uint32_t addr, uint8_t *data, uint16_t len)
+{
+    uint8_t cmd = 0x02;
+    uint8_t addr_buf[3];
+    addr_buf[0] = (addr >> 16) & 0xFF;
+    addr_buf[1] = (addr >> 8) & 0xFF;
+    addr_buf[2] = addr & 0xFF;
+
+    W25Q128_WriteEnable();
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, &cmd, 1, 100);
+    HAL_SPI_Transmit(&hspi1, addr_buf, 3, 100);
+    HAL_SPI_Transmit(&hspi1, data, len, 100);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+    W25Q128_WaitBusy();
+}
+
+void W25Q128_ReadData(uint32_t addr, uint8_t *buf, uint16_t len)
+{
+    uint8_t cmd = 0x03;
+    uint8_t addr_buf[3];
+    addr_buf[0] = (addr >> 16) & 0xFF;
+    addr_buf[1] = (addr >> 8) & 0xFF;
+    addr_buf[2] = addr & 0xFF;
+
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, &cmd, 1, 100);
+    HAL_SPI_Transmit(&hspi1, addr_buf, 3, 100);
+    HAL_SPI_Receive(&hspi1, buf, len, 100);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -409,9 +483,26 @@ void StartDefaultTask(void const * argument)
 {
   /* USER CODE BEGIN 5 */
  /* Infinite loop */
+	uint8_t write_buf[16] = "Hello W25Q128!";
+	uint8_t read_buf[16] = {0};
+
 	for(;;)
 	{
 		osMutexWait(myMutexHandle, osWaitForever);
+
+		W25Q128_SectorErase(0x000000);
+		W25Q128_PageWrite(0x000000, write_buf, 14);
+		W25Q128_ReadData(0x000000, read_buf, 14);
+
+		if(memcmp(write_buf, read_buf, 14) == 0)
+		{
+			printf("Write/Read OK: %s\r\n", read_buf);
+		}
+			else
+		{
+			printf("Write/Read FAIL\r\n");
+		}
+
 	    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_2); //点灯
 	    printf("LED Toggle\r\n");
 
