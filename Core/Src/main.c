@@ -17,8 +17,8 @@
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
-#include "main.h"        //声明HAL库函数和全局句柄
-#include "cmsis_os.h"    //提供 FreeRTOS 的 API
+#include "main.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -63,6 +63,7 @@ void StartDefaultTask(void const * argument);
 void StartProducerTask(void const * argument); //生产者任务
 void StartConsumerTask(void const * argument); //消费者任务
 void StartSemaphoreTask(void const * argument);//信号量任务
+uint32_t W25Q128_ReadID(void);                 //W25Q128
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -133,7 +134,7 @@ int main(void)
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 256);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -296,18 +297,18 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
 
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_RESET);
+
   /*Configure GPIO pin : PA0 */
   GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PA4 */
@@ -317,29 +318,18 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PB2 */
+  GPIO_InitStruct.Pin = GPIO_PIN_2;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
-/* USER CODE BEGIN Header_StartDefaultTask */
-/**
-  * @brief  Function implementing the defaultTask thread.
-  * @param  argument: Not used
-  * @retval None
-  */
-/* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void const * argument)
-{
- /* USER CODE BEGIN 5 */
- /* Infinite loop */
-	for(;;)
-	{
-	    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_0);
-	    printf("LED Toggle\r\n");
-	    osDelay(500);
-	}
- /* USER CODE END 5 */
-}
+
 /* USER CODE BEGIN 4 */
 void StartSemaphoreTask(void const * argument)
 {
@@ -347,7 +337,9 @@ void StartSemaphoreTask(void const * argument)
     {
         if(osSemaphoreWait(mySemHandle, osWaitForever) == osOK)//等待信号量
         {
+        	osMutexWait(myMutexHandle, osWaitForever);
             printf("Semaphore received!\r\n");
+            osMutexRelease(myMutexHandle);
         }
     }
 }
@@ -380,7 +372,60 @@ void StartConsumerTask(void const * argument)
         }
     }
 }
+
+uint32_t W25Q128_ReadID(void)
+{
+    uint8_t cmd = 0x9F;        // 读 ID 命令
+    uint8_t id[3] = {0};       // 存 3 个字节的 ID
+    uint32_t flash_id = 0;
+
+    // 1. 拉低 CS，选中 W25Q128
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+
+    // 2. 发送读 ID 命令
+    HAL_SPI_Transmit(&hspi1, &cmd, 1, 100);
+
+    // 3. 读取 3 个字节的 ID
+    HAL_SPI_Receive(&hspi1, id, 3, 100);
+
+    // 4. 拉高 CS，取消选中
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+
+    // 5. 拼接成 32 位 ID
+    flash_id = (id[0] << 16) | (id[1] << 8) | id[2];
+
+    return flash_id;
+}
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void const * argument)
+{
+  /* USER CODE BEGIN 5 */
+ /* Infinite loop */
+	for(;;)
+	{
+		osMutexWait(myMutexHandle, osWaitForever);
+	    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_2); //点灯
+	    printf("LED Toggle\r\n");
+
+	    uint32_t id = W25Q128_ReadID();        //读w25ID
+	    printf("W25Q128 ID: 0x%06lX\r\n", id);
+
+	    printf("DefaultTask stack: %lu\r\n", uxTaskGetStackHighWaterMark(NULL));//查看栈历史最小剩余容量
+
+	    osMutexRelease(myMutexHandle);
+
+	    osDelay(1000);
+	}
+  /* USER CODE END 5 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.
